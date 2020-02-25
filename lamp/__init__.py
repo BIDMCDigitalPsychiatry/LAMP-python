@@ -45,7 +45,7 @@ from openapi_client.models.study import Study
 from openapi_client.models.temporal_event import TemporalEvent
 
 HOST = "https://api.lamp.digital"
-KEY = 'admin:LAMPLAMP' # your login credentials go here
+KEY = "" # your login credentials go here
 
 configuration = Configuration()
 configuration.host = HOST
