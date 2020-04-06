@@ -20,6 +20,7 @@ from openapi_client.api.type_api import TypeApi
 # import ApiClient
 from openapi_client.api_client import ApiClient
 from openapi_client.configuration import Configuration
+from lamp.configuration import configure
 from openapi_client.exceptions import OpenApiException
 from openapi_client.exceptions import ApiTypeError
 from openapi_client.exceptions import ApiValueError
@@ -49,17 +50,4 @@ KEY = "" # your login credentials go here
 BETA_VALUES_FILEPATH = "BETA_FILEPATH" #filepath to folder holding beta values
 
 
-configuration = Configuration(host = HOST)
-configuration.api_key['Authorization'] = KEY
-configuration.api_key_prefix['Authorization'] = 'Basic'
 
-
-activity = ActivityApi(ApiClient(configuration))
-activity_spec = ActivitySpecApi(ApiClient(configuration))
-credential = CredentialApi(ApiClient(configuration))
-participant = ParticipantApi(ApiClient(configuration))
-researcher = ResearcherApi(ApiClient(configuration))
-result_event = ResultEventApi(ApiClient(configuration))
-sensor_event = SensorEventApi(ApiClient(configuration))
-study = StudyApi(ApiClient(configuration))
-type = TypeApi(ApiClient(configuration))
