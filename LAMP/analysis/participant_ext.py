@@ -89,17 +89,13 @@ class ParticipantExt():
         attachment_dict = {}
         for feature in ATTACHMENTS:
             try:
-                attachment_events = LAMP.Type.get_attachment(type_id=self.id, attachment_key="lamp." + feature)["data"]
-            except Exception as e: #unable to find resource
+                attachment_events = LAMP.Type.get_attachment(type_id=self.id, attachment_key='.'.join(["lamp", feature]))["data"]
+            except:
                 continue
-            
+
             if len(attachment_events) > 0:
-                attachment_dict[feature] = [(event['value'], event['timestamp']) for event in attachment_events]
-        
-        #Sort
-        for feature in attachment_dict:
-            attachment_dict[feature] = sorted(attachment_dict[feature], key=lambda x: x[1])
-        
+                attachment_dict[feature] = sorted([(event['value'], event['timestamp']) for event in attachment_events], key=lambda x: x[1])
+
         return attachment_dict
     
     def passive_feature_results(self, resolution):
@@ -120,31 +116,27 @@ class ParticipantExt():
         #Get all passive feature events
         passive_feature_dict = {}
         for feature in PASSIVE_FEATURES:            
-            feature_query, feature_query_2 = 'beiwe.' + feature + '.' + RESOLUTION_KEY[resolution], 'beiwe.passive_features.' + feature + '.' + RESOLUTION_KEY[resolution] 
+            feature_query, feature_query_2 = '.'.join(['beiwe', feature, RESOLUTION_KEY[resolution]]), '.'.join(['beiwe', 'passive_features', feature, RESOLUTION_KEY[resolution]])
 
             feature_events, feature_events_2 = LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query), LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query_2)
 
-            if len(feature_events['data']) > 0:
-                passive_feature_dict[feature] = []
-                for event in feature_events['data']:
-                    passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
-                    
-            elif len(feature_events_2['data']) > 0:
-                passive_feature_dict[feature] = []
-                for event in feature_events_2['data']:
-                    passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
+            for f_events in [feature_events, feature_events_2]: #Should there only be one non-empty query?
+                if len(f_events['data']) > 0:
+                    passive_feature_dict[feature] = []
+                    for event in f_events['data']:
+                        passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
+            
+            if feature in passive_feature_dict:
+                passive_feature_dict[feature] = sorted(passive_feature_dict[feature], key=lambda x: x[1])
 
-        #Sort
-        for feature in passive_feature_dict:
-            passive_feature_dict[feature] = sorted(passive_feature_dict[feature], key=lambda x: x[1])
-        
         return passive_feature_dict
 
     def survey_results(self, participant=None, question_categories=None):
         """
         Get survey events for participant
+        
         :param participant (str): the LAMP ID for participant. If not provided, then take participant id
-        :param question_categories (bool): indicates whether to use custom question mappings as defined in params file
+        :param question_categories (dict): maps text in active event responses to a domain (str) and reverse_scoring parameter (bool)
         """
 
         if participant is None:
@@ -154,7 +146,9 @@ class ParticipantExt():
         participant_activities_surveys = [activity for activity in participant_activities if activity['spec'] == 'lamp.survey']
         participant_activities_surveys_ids = [survey['id'] for survey in participant_activities_surveys]        
 
-        participant_results = [result for result in LAMP.ActivityEvent.all_by_participant(participant)['data'] if result['activity'] in participant_activities_surveys_ids and len(result['temporal_slices']) > 0]
+        participant_results = [result for result in LAMP.ActivityEvent.all_by_participant(participant)['data'] if 'activity' in result and result['activity'] in participant_activities_surveys_ids and len(result['temporal_slices']) > 0]
+
+        
         participant_surveys = {} #maps survey_type to occurence of scores 
         for result in participant_results:
             #Check if it's a survey event
@@ -169,21 +163,28 @@ class ParticipantExt():
             for event in result['temporal_slices']: #individual questions in a survey
                 question = event['item']
                 
+                question_exists = False
                 for i in range(len(result_settings)) : #match question info to question
                     if result_settings[i]['text'] == question: 
                         current_question_info=result_settings[i]
+                        exists = True
                         break
 
-                #score based on question type:
-                score=None
-                event_value=event.get('value') #safely get event['value'] to protect from missing keys
                 
-                if current_question_info['type'] =='likert' and event_value!=None :
+                if not exists: #question text is different from the activity setting; skip
+                    continue
+                    
+                #score based on question type:
+                event_value = event.get('value') #safely get event['value'] to protect from missing keys
+                
+                if event_value == 'NULL': continue # invalid (TO-DO: change these events to ensure this is not being returned)
+                
+                elif current_question_info['type'] == 'likert' and event_value != None:
                     score = float(event_value)
                         
-                elif current_question_info['type']=='boolean':
+                elif current_question_info['type'] == 'boolean':
                     if event_value == 'no': score = 0.0 #no is healthy in standard scoring
-                    elif event_value =='yes' : score = 3.0 # yes is healthy in reverse scoring
+                    elif event_value == 'yes' : score = 3.0 # yes is healthy in reverse scoring
 
                 elif current_question_info['type'] == 'list' :
                     for option_index in range(len(current_question_info['options'])) :
@@ -193,11 +194,11 @@ class ParticipantExt():
                 elif current_question_info['type'] == 'text':  #skip
                     continue
                 
-                if score==None : continue
+                else: continue #no valid score to be used
+                    
                 #add event to a category, either user-defined or default activity
                 if question_categories:
-                    #See if there is an extra space in the string
-                    if question not in question_categories:
+                    if question not in question_categories: #See if there is an extra space in the string
                         if question[:-1] in question_categories:
                             question = question[:-1]
                         else:
@@ -249,8 +250,7 @@ class ParticipantExt():
         attachment_features = self.attachment_results() #static attachment features
         
         surveys = {**surveys, **passive_features, **attachment_features}
-        #surveys.update(passive_features).update(attachment_features)
-
+        
         if len(surveys) == 0:
             return None
 
@@ -268,7 +268,9 @@ class ParticipantExt():
 
         if start_morning: 
             day_first, day_last = day_first.replace(hour=9, minute=0, second=0), day_last.replace(hour=9, minute=0, second=0)
+            
         days_elapsed = (day_last - day_first).days 
+        
         date_list = [day_first + datetime.timedelta(minutes=15*FIFTEEN_MIN_PER_UNIT[resolution]*x) for x in range(0, math.ceil(min(days_elapsed, days_cap) * UNITS_PER_DAY[resolution]))]
 
         #Create dateframe for the number of time units that have data; limited by days; cap at 'days_cap' if this number is large

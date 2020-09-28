@@ -540,6 +540,7 @@ class SensorEventApi(object):
                 participant_id
             kwargs['sensor_event_sensor_event'] = \
                 sensor_event_sensor_event
+            
             return self.call_with_http_info(**kwargs)
 
         self.create = Endpoint(
