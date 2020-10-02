@@ -98,38 +98,82 @@ class ParticipantExt():
 
         return attachment_dict
     
-    def passive_feature_results(self, resolution):
-        """
-        """
-        #Find beiwe id
-        RESOLUTION_KEY = {'day':'daily', 'week':'weekly', 'month':'monthly'}
-        PASSIVE_FEATURES = ['Hometime', 'DistTravelled', 'RoG', 'MaxDiam',
-                           'MaxHomeDist', 'SigLocsVisited', 'AvgFlightLen', 'StdFlightLen',
-                           'AvgFlightDur', 'StdFlightDur', 'ProbPause', 'SigLocEntropy',
-                           'MinsMissing', 'CircdnRtn', 'WkEndDayRtn', 'outgoing_texts',
-                           'outgoing_textlengths', 'text_outdegree', 'incoming_texts',
-                           'incoming_textlengths', 'text_indegree', 'text_reciprocity',
-                           'text_responsiveness', 'outgoing_calls', 'outgoing_calllengths',
-                           'call_outdegree', 'incoming_calls', 'incoming_calllengths',
-                           'call_indegree', 'call_reciprocity', 'call_responsiveness']
+    # def passive_feature_results(self, resolution):
+    #     """
+    #     """
+    #     #Find beiwe id
+    #     RESOLUTION_KEY = {'day':'daily', 'week':'weekly', 'month':'monthly'}
+    #     PASSIVE_FEATURES = ['Hometime', 'DistTravelled', 'RoG', 'MaxDiam',
+    #                        'MaxHomeDist', 'SigLocsVisited', 'AvgFlightLen', 'StdFlightLen',
+    #                        'AvgFlightDur', 'StdFlightDur', 'ProbPause', 'SigLocEntropy',
+    #                        'MinsMissing', 'CircdnRtn', 'WkEndDayRtn', 'outgoing_texts',
+    #                        'outgoing_textlengths', 'text_outdegree', 'incoming_texts',
+    #                        'incoming_textlengths', 'text_indegree', 'text_reciprocity',
+    #                        'text_responsiveness', 'outgoing_calls', 'outgoing_calllengths',
+    #                        'call_outdegree', 'incoming_calls', 'incoming_calllengths',
+    #                        'call_indegree', 'call_reciprocity', 'call_responsiveness']
 
-        #Get all passive feature events
-        passive_feature_dict = {}
-        for feature in PASSIVE_FEATURES:            
-            feature_query, feature_query_2 = '.'.join(['beiwe', feature, RESOLUTION_KEY[resolution]]), '.'.join(['beiwe', 'passive_features', feature, RESOLUTION_KEY[resolution]])
+    #     #Get all passive feature events
+    #     passive_feature_dict = {}
+    #     for feature in PASSIVE_FEATURES:            
+    #         feature_query, feature_query_2 = '.'.join(['beiwe', feature, RESOLUTION_KEY[resolution]]), '.'.join(['beiwe', 'passive_features', feature, RESOLUTION_KEY[resolution]])
 
-            feature_events, feature_events_2 = LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query), LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query_2)
+    #         feature_events, feature_events_2 = LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query), LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query_2)
 
-            for f_events in [feature_events, feature_events_2]: #Should there only be one non-empty query?
-                if len(f_events['data']) > 0:
-                    passive_feature_dict[feature] = []
-                    for event in f_events['data']:
-                        passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
+    #         for f_events in [feature_events, feature_events_2]: #Should there only be one non-empty query?
+    #             if len(f_events['data']) > 0:
+    #                 passive_feature_dict[feature] = []
+    #                 for event in f_events['data']:
+    #                     passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
             
-            if feature in passive_feature_dict:
-                passive_feature_dict[feature] = sorted(passive_feature_dict[feature], key=lambda x: x[1])
+    #         if feature in passive_feature_dict:
+    #             passive_feature_dict[feature] = sorted(passive_feature_dict[feature], key=lambda x: x[1])
 
-        return passive_feature_dict
+    #     return passive_feature_dict
+
+    def sensor_results(self, participant=None):
+        """
+        Get dictionary of sensor data
+        """
+
+        def get_sensor_events(sensor_events, subj, origin, to=None):
+            """
+            Recursively get sensor events
+            
+            results: list containing all sensor event results up to that point
+            """
+            if to is None:results = sorted(LAMP.SensorEvent.all_by_participant(subj, origin=origin)['data'], key=lambda x: x['timestamp'])
+            else: results = sorted(LAMP.SensorEvent.all_by_participant(subj, origin=origin, to=to)['data'], key=lambda x: x['timestamp'])
+                
+            sensor_events += results
+            if len(results) < 1000: #done
+                return sensor_events
+    
+            new_to = results[0]['timestamp']
+            
+            return get_sensor_events(sensor_events, subj, origin, to=new_to)
+
+        lamp_sensors = ["lamp.accelerometer", "lamp.accelerometer.motion", #"lamp.analytics", 
+                        "lamp.blood_pressure", "lamp.bluetooth", "lamp.calls", "lamp.distance",
+                        "lamp.flights", "lamp.gps", "lamp.gps.contextual", "lamp.gyroscope",
+                        "lamp.heart_rate", "lamp.height", "lamp.magnetometer", "lamp.respiratory_rate"
+                        "lamp.screen_state","lamp.segment", "lamp.sleep", "lamp.sms", "lamp.steps",
+                        "lamp.weight", "lamp.wifi"]
+
+        if participant is None:
+            participant = self.id
+
+        participant_sensors = {}
+        for sensor in lamp_sensors:
+            
+            s_results = sorted([(res['timestamp'], res['data']) for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x[0])
+            
+            if len(s_results) > 0:
+                participant_sensors[sensor] = s_results
+
+        return participant_sensors
+
+
 
     def survey_results(self, participant=None, question_categories=None):
         """
@@ -222,43 +266,47 @@ class ParticipantExt():
             for category in survey_result: 
                 survey_result[category] = np.mean(survey_result[category])
                 if category not in participant_surveys: 
-                    participant_surveys[category] = [(survey_result[category], survey_time)]
+                    participant_surveys[category] = [(survey_time, survey_result[category])]
                 else: 
-                    participant_surveys[category].append((survey_result[category], survey_time))
+                    participant_surveys[category].append((survey_time, survey_result[category]))
 
         #Sort surveys by time
         for activity_category in participant_surveys:
-            participant_surveys[activity_category] = sorted(participant_surveys[activity_category], key=lambda x: x[1])
+            participant_surveys[activity_category] = sorted(participant_surveys[activity_category], key=lambda x: x[0])
 
         return participant_surveys
         
 
-    def create_df(self, days_cap=120, day_first=None, day_last=None, resolution='day', start_monday=False, start_morning=True, time_centered=False, question_categories=None):
+    def create_df(self, days_cap=120, day_first=None, day_last=None, resolution=datetime.timedelta(days=1), start_monday=False, start_morning=True, time_centered=False, question_categories=None):
         """
         Create participant dataframe
         :param day_first (datetime.Date)
         """
 
-        FIFTEEN_MIN_PER_UNIT = {'15 min': 1, 'day': 4*24, 'week': 4*24*7, 'month': 4*24*30}
-        UNITS_PER_DAY = {'15 min': 4*24, 'day': 1, 'week': 1/7, 'month': 1/30}
+#         FIFTEEN_MIN_PER_UNIT = {'15 min': 1, 'day': 4*24, 'week': 4*24*7, 'month': 4*24*30}
+#         UNITS_PER_DAY = {'15 min': 4*24, 'day': 1, 'week': 1/7, 'month': 1/30}
 
   
-        assert resolution in ['15 min', 'day', 'week', 'month']
+#         assert resolution in ['15 min', 'day', 'week', 'month']
 
         surveys = self.survey_results(question_categories=question_categories) #survey ActivityEvents
-        passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
-        attachment_features = self.attachment_results() #static attachment features
+        sensors = self.sensor_results() # sensor SensorEvents
+
+        print(sensors['lamp.gps'])
         
-        surveys = {**surveys, **passive_features, **attachment_features}
+        #passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
+        #attachment_features = self.attachment_results() #static attachment features
         
-        if len(surveys) == 0:
+        results = {**surveys}#, **sensors}#, **passive_features, **attachment_features}
+        
+        if len(results) == 0:
             return None
 
         #Find the first, last date
-        if day_first is None: day_first = datetime.datetime.utcfromtimestamp(sorted([surveys[dom][0][1]/1000 for dom in surveys])[0])
+        if day_first is None: day_first = datetime.datetime.utcfromtimestamp(sorted([results[dom][0][0]/1000 for dom in results])[0])
         else: day_first = datetime.datetime.combine(day_first, datetime.time.min) #convert to datetime
 
-        if day_last is None: day_last = datetime.datetime.utcfromtimestamp(sorted([surveys[dom][-1][1]/1000 for dom in surveys])[-1])
+        if day_last is None: day_last = datetime.datetime.utcfromtimestamp(sorted([results[dom][-1][0]/1000 for dom in results])[-1])
         else: day_last = datetime.datetime.combine(day_last, datetime.time.min) #convert to datetime
 
         #Clip days based on morning and weekday parameters
@@ -271,7 +319,8 @@ class ParticipantExt():
             
         days_elapsed = (day_last - day_first).days 
         
-        date_list = [day_first + datetime.timedelta(minutes=15*FIFTEEN_MIN_PER_UNIT[resolution]*x) for x in range(0, math.ceil(min(days_elapsed, days_cap) * UNITS_PER_DAY[resolution]))]
+        #Create based on resolution
+        date_list = [day_first + (resolution * x) for x in range(0, math.ceil(min(days_elapsed, days_cap) * datetime.timedelta(days=1) / resolution))]
 
         #Create dateframe for the number of time units that have data; limited by days; cap at 'days_cap' if this number is large
         df = pd.DataFrame({'Date': date_list, 'id':self.id})
@@ -297,10 +346,16 @@ class ParticipantExt():
             for date, date_df in dom_results.groupby('Rounded Date'):                    
                 df.loc[df['Date'] == date.to_pydatetime(), dom] = np.mean(date_df['Result']) 
 
-        #Convert to date to actual date objects if resolution is day or greater
-        if resolution != '15 min':
-            df['Date'] = df['Date'].apply(lambda d: d.date())
-            
+        #Parse sensors and convert them into passive features
+
+        #Single sensor features
+        # LAMP.analysis.gps_features(sensors, date_list)
+        # LAMP.analysis.call_text_features(sensor_data=sensors, dates=date_list, resolution=resolution)
+        # LAMP.analysis.accelerometer_features(sensors, date_list)
+
+        #Multi-sensor features
+
+  
         #Trim columns if there are predetermined domains
         if self.domains is not None: 
             df = df.loc[:, ['id', 'Date'] + [d for d in self.domains if d in df.columns.values]]
