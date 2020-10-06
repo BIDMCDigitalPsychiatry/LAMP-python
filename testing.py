@@ -14,7 +14,7 @@ def sensorResultsTest1():
 
 
 if __name__ == "__main__":
-    LAMP.connect("admin", "LAMPLAMP") #REMOVE CREDENTIALS WHEN PUSHING
+    LAMP.connect() #REMOVE CREDENTIALS WHEN PUSHING
     
     #Test sensor results
     sensorResultsTest1()

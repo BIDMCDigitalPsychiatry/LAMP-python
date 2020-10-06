@@ -30,7 +30,6 @@ def label_gps_points(sensor_data):
 
 def main(sensor_data, dates, resolution):
     labeled_data = label_gps_points(sensor_data)
-    print(labeled_data)
 
 
 if __name__ == "__main__":
