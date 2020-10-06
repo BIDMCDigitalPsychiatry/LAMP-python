@@ -291,8 +291,6 @@ class ParticipantExt():
 
         surveys = self.survey_results(question_categories=question_categories) #survey ActivityEvents
         sensors = self.sensor_results() # sensor SensorEvents
-
-        print(sensors['lamp.gps'])
         
         #passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
         #attachment_features = self.attachment_results() #static attachment features
@@ -349,7 +347,7 @@ class ParticipantExt():
         #Parse sensors and convert them into passive features
 
         #Single sensor features
-        # LAMP.analysis.gps_features(sensors, date_list)
+        LAMP.analysis.gps_features(sensors, date_list, resolution=resolution)
         # LAMP.analysis.call_text_features(sensor_data=sensors, dates=date_list, resolution=resolution)
         # LAMP.analysis.accelerometer_features(sensors, date_list)
 
