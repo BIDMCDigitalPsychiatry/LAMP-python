@@ -82,55 +82,6 @@ class ParticipantExt():
             domains = self.domains
         return domains
 
-    def attachment_results(self):
-        ATTACHMENTS = {"beta_a", "beta_b", 
-                      "screen_features.screen_time", 'screen_features.sessions', 'screen_features.checks', 'screen_features.session_time'}
-        
-        attachment_dict = {}
-        for feature in ATTACHMENTS:
-            try:
-                attachment_events = LAMP.Type.get_attachment(type_id=self.id, attachment_key='.'.join(["lamp", feature]))["data"]
-            except:
-                continue
-
-            if len(attachment_events) > 0:
-                attachment_dict[feature] = sorted([(event['value'], event['timestamp']) for event in attachment_events], key=lambda x: x[1])
-
-        return attachment_dict
-    
-    # def passive_feature_results(self, resolution):
-    #     """
-    #     """
-    #     #Find beiwe id
-    #     RESOLUTION_KEY = {'day':'daily', 'week':'weekly', 'month':'monthly'}
-    #     PASSIVE_FEATURES = ['Hometime', 'DistTravelled', 'RoG', 'MaxDiam',
-    #                        'MaxHomeDist', 'SigLocsVisited', 'AvgFlightLen', 'StdFlightLen',
-    #                        'AvgFlightDur', 'StdFlightDur', 'ProbPause', 'SigLocEntropy',
-    #                        'MinsMissing', 'CircdnRtn', 'WkEndDayRtn', 'outgoing_texts',
-    #                        'outgoing_textlengths', 'text_outdegree', 'incoming_texts',
-    #                        'incoming_textlengths', 'text_indegree', 'text_reciprocity',
-    #                        'text_responsiveness', 'outgoing_calls', 'outgoing_calllengths',
-    #                        'call_outdegree', 'incoming_calls', 'incoming_calllengths',
-    #                        'call_indegree', 'call_reciprocity', 'call_responsiveness']
-
-    #     #Get all passive feature events
-    #     passive_feature_dict = {}
-    #     for feature in PASSIVE_FEATURES:            
-    #         feature_query, feature_query_2 = '.'.join(['beiwe', feature, RESOLUTION_KEY[resolution]]), '.'.join(['beiwe', 'passive_features', feature, RESOLUTION_KEY[resolution]])
-
-    #         feature_events, feature_events_2 = LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query), LAMP.SensorEvent.all_by_participant(participant_id=self.id, origin=feature_query_2)
-
-    #         for f_events in [feature_events, feature_events_2]: #Should there only be one non-empty query?
-    #             if len(f_events['data']) > 0:
-    #                 passive_feature_dict[feature] = []
-    #                 for event in f_events['data']:
-    #                     passive_feature_dict[feature].append((event['data']['value'], event['timestamp']))
-            
-    #         if feature in passive_feature_dict:
-    #             passive_feature_dict[feature] = sorted(passive_feature_dict[feature], key=lambda x: x[1])
-
-    #     return passive_feature_dict
-
     def sensor_results(self, participant=None):
         """
         Get dictionary of sensor data
@@ -156,7 +107,7 @@ class ParticipantExt():
         lamp_sensors = ["lamp.accelerometer", "lamp.accelerometer.motion", #"lamp.analytics", 
                         "lamp.blood_pressure", "lamp.bluetooth", "lamp.calls", "lamp.distance",
                         "lamp.flights", "lamp.gps", "lamp.gps.contextual", "lamp.gyroscope",
-                        "lamp.heart_rate", "lamp.height", "lamp.magnetometer", "lamp.respiratory_rate"
+                        "lamp.heart_rate", "lamp.height", "lamp.magnetometer", "lamp.respiratory_rate",
                         "lamp.screen_state","lamp.segment", "lamp.sleep", "lamp.sms", "lamp.steps",
                         "lamp.weight", "lamp.wifi"]
 
@@ -165,9 +116,9 @@ class ParticipantExt():
 
         participant_sensors = {}
         for sensor in lamp_sensors:
-            
+
             s_results = sorted([(res['timestamp'], res['data']) for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x[0])
-            
+
             if len(s_results) > 0:
                 participant_sensors[sensor] = s_results
 
@@ -286,9 +237,28 @@ class ParticipantExt():
 #         FIFTEEN_MIN_PER_UNIT = {'15 min': 1, 'day': 4*24, 'week': 4*24*7, 'month': 4*24*30}
 #         UNITS_PER_DAY = {'15 min': 4*24, 'day': 1, 'week': 1/7, 'month': 1/30}
 
-  
-#         assert resolution in ['15 min', 'day', 'week', 'month']
+        def collate_surveys(surveys, df):
+            """
+            """
+            #Parse surveys
+            for dom in surveys:
+                if dom not in domains and domains is not None:
+                    continue
 
+                #Based on resolution, match each survey event to its closest date
+                dates = [datetime.datetime.utcfromtimestamp(event_time/1000) for _, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last] 
+
+                #Choose closest date if "time centered"; else, choose preceding date
+                if time_centered: rounded_dates = [df.loc[df.index[(date - df['Date']).abs().sort_values().index[0]], 'Date'] for date in dates]
+                else: rounded_dates = [df.loc[df.index[(date - df['Date'])[(date - df['Date']) >= datetime.timedelta(0)].sort_values().index[0]], 'Date'] for date in dates]
+
+                results = [event_val for event_val, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last]
+                dom_results = pd.DataFrame({'Date':dates, 'Rounded Date':rounded_dates, 'Result':results})
+                for date, date_df in dom_results.groupby('Rounded Date'):                    
+                    df.loc[df['Date'] == date.to_pydatetime(), dom] = np.mean(date_df['Result']) 
+
+            return df
+  
         surveys = self.survey_results(question_categories=question_categories) #survey ActivityEvents
         sensors = self.sensor_results() # sensor SensorEvents
         
@@ -327,33 +297,20 @@ class ParticipantExt():
         for dom in domains: 
             df[dom] = np.nan
 
-        #Parse surveys
-        for dom in surveys:
-            if dom not in domains and domains is not None:
-                continue
 
-            #Based on resolution, match each survey event to its closest date
-            dates = [datetime.datetime.utcfromtimestamp(event_time/1000) for _, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last] 
-
-            #Choose closest date if "time centered"; else, choose preceding date
-            if time_centered: rounded_dates = [df.loc[df.index[(date - df['Date']).abs().sort_values().index[0]], 'Date'] for date in dates]
-            else: rounded_dates = [df.loc[df.index[(date - df['Date'])[(date - df['Date']) >= datetime.timedelta(0)].sort_values().index[0]], 'Date'] for date in dates]
-
-            results = [event_val for event_val, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last]
-            dom_results = pd.DataFrame({'Date':dates, 'Rounded Date':rounded_dates, 'Result':results})
-            for date, date_df in dom_results.groupby('Rounded Date'):                    
-                df.loc[df['Date'] == date.to_pydatetime(), dom] = np.mean(date_df['Result']) 
-
+        surveyDf = collate_surveys(surveys, df)
         #Parse sensors and convert them into passive features
 
         #Single sensor features
-        LAMP.analysis.gps_features(sensors, date_list, resolution=resolution)
-        # LAMP.analysis.call_text_features(sensor_data=sensors, dates=date_list, resolution=resolution)
-        # LAMP.analysis.accelerometer_features(sensors, date_list)
+        callTextDf = LAMP.analysis.call_text_features.all(sensors, df, resolution)
+        accelDf = LAMP.analysis.accelerometer_features.all(sensors, date_list, resolution=resolution)
+        #screenDf = LAMP.analysis.screen_features.all(sensors, df, resolution)
+        #gpsDf = LAMP.analysis.gps_features.all(sensors, date_list, resolution=resolution)
 
-        #Multi-sensor features
+        #Merge dfs
+        df = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), 
+                    [surveyDf, accelDf, gpsDf, callTextDf, screenDf])
 
-  
         #Trim columns if there are predetermined domains
         if self.domains is not None: 
             df = df.loc[:, ['id', 'Date'] + [d for d in self.domains if d in df.columns.values]]

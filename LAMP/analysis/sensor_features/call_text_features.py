@@ -57,19 +57,22 @@ def call_number(data, times, resolution, label=1):
         
     #Remove duplicate entries by converting call data to set
     call_data = set([(datetime.datetime.utcfromtimestamp(call[0] / 1000), tuple([(entry, call[1][entry]) for entry in call[1]])) for call in data['lamp.calls']])
-
+    
     #Match each call with a corresponding time window
-    callDf = pd.DataFrame([[min([t for t in times if t <= call[0]], key=lambda x: abs(x - call[0])), dict(call[1])['call_type']] for call in call_data if dict(call[1])['call_type'] == label and call[0] >= sorted(times)[0] and call[0] <= sorted(times)[-1] + resolution], columns=['Date', 'Call Type'])
+    print([call for call in call_data[1]])
+    callDf = pd.DataFrame([[min([t for t in times if t <= call[0]], key=lambda x: abs(x - call[0])), call[1][1][1]] for call in call_data if dict(call[1])[1] == label and call[0] >= sorted(times)[0] and call[0] <= sorted(times)[-1] + resolution], columns=['Date', 'Call Type'])
     freqDf = pd.DataFrame([[d, df.count().values[0]] for d, df in callDf.groupby('Date')], columns=['Date', 'Call Frequency'])
     return freqDf
     
-def main(sensor_data, dates, resolution):
+def all(sensor_data, dates, resolution):
     #print(sensor_data['lamp.calls'])
     incoming_calls, outgoing_calls = call_number(sensor_data, dates, resolution=resolution, label=1), call_number(sensor_data, dates, resolution=resolution, label=2)
     incoming_callduration, outgoing_callduration = call_duration(sensor_data, dates, resolution=resolution, label=1), call_duration(sensor_data, dates, resolution=resolution, label=2)
-    
-    #call_degree(sensor_data, dates, resolution=resolution)
 
+    df_list = [incoming_calls, outgoing_calls, incoming_callduration, outgoing_callduration]
+    allDfs = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), df_list)
+    
+    return allDfs
     
 if __name__ == "__main__":
     pass
