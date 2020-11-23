@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import datetime
 from geopy import distance
-
+from functools import reduce
 
 def sleep_time_mean(sensor_data, dates):
     """
@@ -85,8 +85,10 @@ def convert_to_df(sensor_data):
     """
     Turn sensor data dict into df
     """
-    sensorDf = pd.DataFrame(data=[[r[0], r[1]['x'], r[1]['y'], r[1]['z']] for r in sensor_data["lamp.accelerometer"]], 
-                            columns = ['timestamp', 'x', 'y', 'z']).drop_duplicates()
+    sensorDf = sensor_data['lamp.accelerometer']
+    
+    # pd.DataFrame(data=[[r[0], r[1]['x'], r[1]['y'], r[1]['z']] for r in sensor_data["lamp.accelerometer"]], 
+    #                         columns = ['timestamp', 'x', 'y', 'z']).drop_duplicates()
     
         
     sensorDf['UTC time'] = [str(d.date()) + "T" + str(d.time()) for d in pd.to_datetime(sensorDf['timestamp'], unit='ms')]
@@ -120,6 +122,8 @@ def get_optimal_inactivity(df, length=8):
     return period
     
 def all(sensor_data, dates, resolution):
+    if 'lamp.accelerometer' not in sensor_data:
+        return pd.DataFrame({'Date': dates})
 
     df_list = []
     if resolution == datetime.timedelta(days=1):
@@ -127,7 +131,6 @@ def all(sensor_data, dates, resolution):
         df_list.append(activeDf)
 
     allDfs = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), df_list)
-    
     return allDfs
 
 if __name__ == "__main__":

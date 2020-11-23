@@ -13,7 +13,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="LAMP_core",
-    version="1.0.4",
+    version="1.0.5",
     description="LAMP Platform",
     author="Division of Digital Psychiatry at Beth Israel Deaconess Medical Center.",
     author_email="team@digitalpsych.org",

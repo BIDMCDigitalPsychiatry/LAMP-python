@@ -116,11 +116,9 @@ class ParticipantExt():
 
         participant_sensors = {}
         for sensor in lamp_sensors:
-
-            s_results = sorted([(res['timestamp'], res['data']) for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x[0])
-
+            s_results = sorted([{'timestamp':res['timestamp'], **res['data']} for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x['timestamp'])
             if len(s_results) > 0:
-                participant_sensors[sensor] = s_results
+                participant_sensors[sensor] = pd.DataFrame.from_dict(s_results)
 
         return participant_sensors
 
@@ -233,10 +231,6 @@ class ParticipantExt():
         Create participant dataframe
         :param day_first (datetime.Date)
         """
-
-#         FIFTEEN_MIN_PER_UNIT = {'15 min': 1, 'day': 4*24, 'week': 4*24*7, 'month': 4*24*30}
-#         UNITS_PER_DAY = {'15 min': 4*24, 'day': 1, 'week': 1/7, 'month': 1/30}
-
         def collate_surveys(surveys, df):
             """
             """
@@ -302,14 +296,15 @@ class ParticipantExt():
         #Parse sensors and convert them into passive features
 
         #Single sensor features
-        callTextDf = LAMP.analysis.call_text_features.all(sensors, df, resolution)
+        #callTextDf = LAMP.analysis.call_text_features.all(sensors, df, resolution)
         accelDf = LAMP.analysis.accelerometer_features.all(sensors, date_list, resolution=resolution)
         #screenDf = LAMP.analysis.screen_features.all(sensors, df, resolution)
         #gpsDf = LAMP.analysis.gps_features.all(sensors, date_list, resolution=resolution)
 
         #Merge dfs
+        print(surveys)#, accelDf)
         df = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), 
-                    [surveyDf, accelDf, gpsDf, callTextDf, screenDf])
+                    [surveyDf])#, accelDf])#, accelDf, gpsDf, callTextDf, screenDf])
 
         #Trim columns if there are predetermined domains
         if self.domains is not None: 
