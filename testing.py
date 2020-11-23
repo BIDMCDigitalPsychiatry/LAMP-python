@@ -146,7 +146,7 @@ def stackedBarChartTest():
     # chart.save("/home/ryan/vega_test.json")
     
 if __name__ == "__main__":
-    LAMP.connect("admin", "LAMPLAMP") #REMOVE CREDENTIALS WHEN PUSHING
+    LAMP.connect() #REMOVE CREDENTIALS WHEN PUSHING
     participantCreationTest1()
 
     #Test sensor results
