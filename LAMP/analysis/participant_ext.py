@@ -6,6 +6,8 @@ import math
 import LAMP
 import itertools
 from functools import reduce
+from tzwhere import tzwhere
+import pytz
 
 
 class ParticipantExt():
@@ -116,7 +118,8 @@ class ParticipantExt():
 
         participant_sensors = {}
         for sensor in lamp_sensors:
-            s_results = sorted([{'timestamp':res['timestamp'], **res['data']} for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x['timestamp'])
+            s_results = sorted([{'UTC_timestamp':res['timestamp'], **res['data']} for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x['UTC_timestamp'])
+            
             if len(s_results) > 0:
                 participant_sensors[sensor] = pd.DataFrame.from_dict(s_results)
 
@@ -139,6 +142,7 @@ class ParticipantExt():
         participant_activities_surveys = [activity for activity in participant_activities if activity['spec'] == 'lamp.survey']
         participant_activities_surveys_ids = [survey['id'] for survey in participant_activities_surveys]        
 
+        #NOTE: bug here, as if len(results) > 1000, not all results will be returned
         participant_results = [result for result in LAMP.ActivityEvent.all_by_participant(participant)['data'] if 'activity' in result and result['activity'] in participant_activities_surveys_ids and len(result['temporal_slices']) > 0]
 
         
@@ -215,13 +219,14 @@ class ParticipantExt():
             for category in survey_result: 
                 survey_result[category] = np.mean(survey_result[category])
                 if category not in participant_surveys: 
-                    participant_surveys[category] = [(survey_time, survey_result[category])]
+                    participant_surveys[category] = [[survey_time, survey_result[category]]]
                 else: 
-                    participant_surveys[category].append((survey_time, survey_result[category]))
+                    participant_surveys[category].append([survey_time, survey_result[category]])
 
         #Sort surveys by time
         for activity_category in participant_surveys:
-            participant_surveys[activity_category] = sorted(participant_surveys[activity_category], key=lambda x: x[0])
+            participant_surveys[activity_category] = pd.DataFrame(data=sorted(participant_surveys[activity_category], key=lambda x: x[0]),
+                                                                  columns=['UTC_timestamp', 'score'])
 
         return participant_surveys
         
@@ -231,8 +236,14 @@ class ParticipantExt():
         Create participant dataframe
         :param day_first (datetime.Date)
         """
-        def collate_surveys(surveys, df):
+        def collate_surveys(surveys, df, day_first, day_last):
             """
+            Convert survey scores into dense representation ("df")
+            
+            :param surveys
+            :param df
+            :param day_first
+            :param day_last
             """
             #Parse surveys
             for dom in surveys:
@@ -240,35 +251,70 @@ class ParticipantExt():
                     continue
 
                 #Based on resolution, match each survey event to its closest date
-                dates = [datetime.datetime.utcfromtimestamp(event_time/1000) for _, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last] 
-
+                dates = [date for date in surveys[dom]['local_datetime'] if day_first <= date <= day_last] 
                 #Choose closest date if "time centered"; else, choose preceding date
                 if time_centered: rounded_dates = [df.loc[df.index[(date - df['Date']).abs().sort_values().index[0]], 'Date'] for date in dates]
                 else: rounded_dates = [df.loc[df.index[(date - df['Date'])[(date - df['Date']) >= datetime.timedelta(0)].sort_values().index[0]], 'Date'] for date in dates]
 
-                results = [event_val for event_val, event_time in surveys[dom] if day_first <= datetime.datetime.utcfromtimestamp(event_time/1000) <= day_last]
+                results = surveys[dom].loc[(day_first <= surveys[dom]['local_datetime']) & (surveys[dom]['local_datetime'] <= day_last), 'score']
+
                 dom_results = pd.DataFrame({'Date':dates, 'Rounded Date':rounded_dates, 'Result':results})
                 for date, date_df in dom_results.groupby('Rounded Date'):                    
                     df.loc[df['Date'] == date.to_pydatetime(), dom] = np.mean(date_df['Result']) 
 
             return df
+        
+        
   
         surveys = self.survey_results(question_categories=question_categories) #survey ActivityEvents
         sensors = self.sensor_results() # sensor SensorEvents
         
-        #passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
-        #attachment_features = self.attachment_results() #static attachment features
+        results = {**surveys, **sensors}#, **passive_features, **attachment_features}
         
-        results = {**surveys}#, **sensors}#, **passive_features, **attachment_features}
+        #Convert timestamps to appropriate local time; use GPS if it exists
+        for dom in results:
+            if 'lamp.gps' in results:
+                if 'timezone' not in results['lamp.gps'].columns: #Generate timezone for every gps readings and convert timestamps
+                    tz = tzwhere.tzwhere(forceTZ=True) #force timezone if ambigiuous
+                    results['lamp.gps'].loc[:, 'timezone'] = results['lamp.gps'].apply(lambda x: tz.tzNameAt(x['latitude'], 
+                                                                                                             x['longitude'], 
+                                                                                                             forceTZ=True), 
+                                                                                       axis=1)
+
+                    gps_converted_datetimes = pd.Series([datetime.datetime.fromtimestamp(t/1000, tz=pytz.timezone(results['lamp.gps']['timezone'][idx])) for idx, t in results['lamp.gps']['UTC_timestamp'].iteritems()])
+                    gps_converted_timestamps = gps_converted_datetimes.apply(lambda t: t.timestamp() * 1000)
+                    
+                    results['lamp.gps'].loc[:, 'local_timestamp'] = gps_converted_timestamps
+                    results['lamp.gps'].loc[:, 'local_datetime'] = gps_converted_datetimes
+            
+                if dom == 'lamp.gps': continue
+                    
+                matched_gps_readings = results[dom]['UTC_timestamp'].apply(lambda t: results['lamp.gps'].loc[(results['lamp.gps']['UTC_timestamp'] - t).idxmin, 'timezone'])
+                converted_datetimes = pd.Series([datetime.datetime.fromtimestamp(t/1000, tz=pytz.timezone(matched_gps_readings[idx])) for idx, t in results[dom]['UTC_timestamp'].iteritems()])
+
+            else:
+                tz = pytz.timezone('America/New_York')
+                matched_gps_readings = pd.Series([tz] * len(results[dom]))
+                converted_datetimes = results[dom]['UTC_timestamp'].apply(lambda t: datetime.datetime.fromtimestamp(t/1000, tz=tz))
+
+            converted_timestamps = converted_datetimes.apply(lambda t: t.timestamp() * 1000)
+            
+            results[dom].loc[:, 'timezone'] = matched_gps_readings
+            results[dom].loc[:, 'local_timestamp'] = converted_timestamps
+            results[dom].loc[:, 'local_datetime'] = converted_datetimes
+        
+        #passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
+        #attachment_features = self.attachment_results() #static attachment features  
         
         if len(results) == 0:
             return None
 
         #Find the first, last date
-        if day_first is None: day_first = datetime.datetime.utcfromtimestamp(sorted([results[dom][0][0]/1000 for dom in results])[0])
+        concat_datetimes = pd.concat([results[dom] for dom in results])['local_datetime'].sort_values()
+        if day_first is None: day_first = concat_datetimes.min()
         else: day_first = datetime.datetime.combine(day_first, datetime.time.min) #convert to datetime
 
-        if day_last is None: day_last = datetime.datetime.utcfromtimestamp(sorted([results[dom][-1][0]/1000 for dom in results])[-1])
+        if day_last is None: day_last = concat_datetimes.max()
         else: day_last = datetime.datetime.combine(day_last, datetime.time.min) #convert to datetime
 
         #Clip days based on morning and weekday parameters
@@ -291,24 +337,31 @@ class ParticipantExt():
         for dom in domains: 
             df[dom] = np.nan
 
-
-        surveyDf = collate_surveys(surveys, df)
+        ### Featurize result events and add to df
+        
+        #Surveys
+        surveyDf = collate_surveys(surveys, df, day_first, day_last)
         #Parse sensors and convert them into passive features
 
         #Single sensor features
-        #callTextDf = LAMP.analysis.call_text_features.all(sensors, df, resolution)
-        accelDf = LAMP.analysis.accelerometer_features.all(sensors, date_list, resolution=resolution)
+        callTextDf = LAMP.analysis.call_text_features.all(results, date_list, resolution=resolution)
+        accelDf = LAMP.analysis.accelerometer_features.all(results, date_list, resolution=resolution)
         #screenDf = LAMP.analysis.screen_features.all(sensors, df, resolution)
         #gpsDf = LAMP.analysis.gps_features.all(sensors, date_list, resolution=resolution)
 
         #Merge dfs
-        print(surveys)#, accelDf)
+        #print(surveys)#, accelDf)
         df = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), 
-                    [surveyDf])#, accelDf])#, accelDf, gpsDf, callTextDf, screenDf])
+                    [surveyDf, accelDf])#, accelDf, gpsDf, callTextDf, screenDf])
 
         #Trim columns if there are predetermined domains
         if self.domains is not None: 
             df = df.loc[:, ['id', 'Date'] + [d for d in self.domains if d in df.columns.values]]
+            
+        #Save data
+        self.survey_events = surveys
+        self.sensor_events = sensors
+        self.result_events = results
 
         return df
 
