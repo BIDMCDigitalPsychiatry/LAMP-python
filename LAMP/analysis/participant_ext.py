@@ -8,6 +8,8 @@ import itertools
 from functools import reduce
 from tzwhere import tzwhere
 import pytz
+from dateutil.tz import tzlocal
+
 
 
 class ParticipantExt():
@@ -121,7 +123,7 @@ class ParticipantExt():
             s_results = sorted([{'UTC_timestamp':res['timestamp'], **res['data']} for res in get_sensor_events([], participant, origin=sensor)], key=lambda x: x['UTC_timestamp'])
             
             if len(s_results) > 0:
-                participant_sensors[sensor] = pd.DataFrame.from_dict(s_results)
+                participant_sensors[sensor] = pd.DataFrame.from_dict(s_results).drop_duplicates(subset='UTC_timestamp') #remove duplicates
 
         return participant_sensors
 
@@ -151,7 +153,7 @@ class ParticipantExt():
             #Check if it's a survey event
             if result['activity'] not in participant_activities_surveys_ids or len(result['temporal_slices']) == 0: 
                 continue
-
+            
             activity = LAMP.Activity.view(result['activity'])['data'][0]
             result_settings = activity['settings']
 
@@ -227,7 +229,6 @@ class ParticipantExt():
         for activity_category in participant_surveys:
             participant_surveys[activity_category] = pd.DataFrame(data=sorted(participant_surveys[activity_category], key=lambda x: x[0]),
                                                                   columns=['UTC_timestamp', 'score'])
-
         return participant_surveys
         
 
@@ -265,11 +266,10 @@ class ParticipantExt():
             return df
         
         
-  
         surveys = self.survey_results(question_categories=question_categories) #survey ActivityEvents
         sensors = self.sensor_results() # sensor SensorEvents
         
-        results = {**surveys, **sensors}#, **passive_features, **attachment_features}
+        results = {**sensors, **surveys} # **passive_features, **attachment_features}
         
         #Convert timestamps to appropriate local time; use GPS if it exists
         for dom in results:
@@ -285,7 +285,7 @@ class ParticipantExt():
                     gps_converted_timestamps = gps_converted_datetimes.apply(lambda t: t.timestamp() * 1000)
                     
                     results['lamp.gps'].loc[:, 'local_timestamp'] = gps_converted_timestamps
-                    results['lamp.gps'].loc[:, 'local_datetime'] = gps_converted_datetimes
+                    results['lamp.gps'].loc[:, 'local_datetime'] = gps_converted_datetimes.dt.tz_localize(None)
             
                 if dom == 'lamp.gps': continue
                     
@@ -293,16 +293,18 @@ class ParticipantExt():
                 converted_datetimes = pd.Series([datetime.datetime.fromtimestamp(t/1000, tz=pytz.timezone(matched_gps_readings[idx])) for idx, t in results[dom]['UTC_timestamp'].iteritems()])
 
             else:
-                tz = pytz.timezone('America/New_York')
+                tz = pytz.timezone(datetime.datetime.now(tzlocal()).tzname()) #pytz.timezone('America/New_York')
                 matched_gps_readings = pd.Series([tz] * len(results[dom]))
                 converted_datetimes = results[dom]['UTC_timestamp'].apply(lambda t: datetime.datetime.fromtimestamp(t/1000, tz=tz))
 
+
+            converted_datetimes.index.name = None
             converted_timestamps = converted_datetimes.apply(lambda t: t.timestamp() * 1000)
             
             results[dom].loc[:, 'timezone'] = matched_gps_readings
-            results[dom].loc[:, 'local_timestamp'] = converted_timestamps
-            results[dom].loc[:, 'local_datetime'] = converted_datetimes
-        
+            results[dom].loc[:, 'local_timestamp'] = converted_timestamps.values
+            results[dom].loc[:, 'local_datetime'] = converted_datetimes.dt.tz_localize(None).values
+  
         #passive_features = self.passive_feature_results(resolution=resolution) #beiewe.passive_features
         #attachment_features = self.attachment_results() #static attachment features  
         
@@ -333,6 +335,7 @@ class ParticipantExt():
         #Create dateframe for the number of time units that have data; limited by days; cap at 'days_cap' if this number is large
         df = pd.DataFrame({'Date': date_list, 'id':self.id})
 
+        #Add empty survey columns
         domains = [dom for dom in surveys]
         for dom in domains: 
             df[dom] = np.nan
@@ -341,6 +344,7 @@ class ParticipantExt():
         
         #Surveys
         surveyDf = collate_surveys(surveys, df, day_first, day_last)
+        
         #Parse sensors and convert them into passive features
 
         #Single sensor features
@@ -350,9 +354,8 @@ class ParticipantExt():
         #gpsDf = LAMP.analysis.gps_features.all(sensors, date_list, resolution=resolution)
 
         #Merge dfs
-        #print(surveys)#, accelDf)
         df = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), 
-                    [surveyDf, accelDf])#, accelDf, gpsDf, callTextDf, screenDf])
+                    [surveyDf, accelDf, callTextDf]) #gpsDf, screenDf])
 
         #Trim columns if there are predetermined domains
         if self.domains is not None: 

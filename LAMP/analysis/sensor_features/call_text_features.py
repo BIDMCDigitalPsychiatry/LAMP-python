@@ -1,5 +1,6 @@
 import datetime
 import pandas as pd
+from functools import reduce
 
 def social_duration():
     """
@@ -12,19 +13,29 @@ def conversational_degree():
 
     pass
 
-def call_degree(data, times, resolution, label=1):
+def call_degree(data, times, resolution):
     """
     Find degree of call log (i.e. how many persons the user connected with over phone)
     """
     if 'lamp.calls' not in data:
-        return None
+        return pd.DataFrame({'Date': times, 'Call Degree': [0] * len(times)})
+        
     #Remove duplicate entries by converting call data to set
-    call_data = set([(datetime.datetime.utcfromtimestamp(call[0] / 1000), tuple([(entry, call[1][entry]) for entry in call[1]])) for call in data['lamp.calls']])
+    call_data = data['lamp.calls']
+    sel_call_data = call_data.copy()
+    
+    #Map each call with corresponding time wdinwo 
+    timesSeries = pd.Series(times)
+    time_sel_call_data = sel_call_data.apply(lambda row: timesSeries[(timesSeries <= row['local_datetime']) & ((row['local_datetime'] - timesSeries) < resolution)].max(), axis=1)
+    
+    sel_call_data.loc[:, 'time'] = time_sel_call_data.values
 
-    #Match each call with a corresponding time window
-    callDf = pd.DataFrame([[min([t for t in times if t <= call[0]], key=lambda x: abs(x - call[0])), dict(call[1])['call_trace']] for call in call_data if dict(call[1])['call_type'] == label and call[0] >= sorted(times)[0] and call[0] <= sorted(times)[-1] + resolution], columns=['Date', 'Call Trace'])
-    degreeDf = pd.DataFrame([[d, df.count().values[0]] for d, df in callDf.groupby('Date')], columns=['Date', 'Call Frequency'])
-    return degreeDf
+    callDegreeDf = pd.DataFrame([[t, sel_call_data.loc[sel_call_data['time'] == t, 'call_trace'].nunique()] for t in times], columns=['Date', 'Call Degree'])
+    
+    return callDegreeDf
+    
+    
+
 
 def call_duration(data, times, resolution, label=1):
     """
@@ -35,14 +46,23 @@ def call_duration(data, times, resolution, label=1):
     :param label(int): indicates whether or not to query incoming calls (1) or outgoing calls (2)
     """
     if 'lamp.calls' not in data:
-        return None
+        return pd.DataFrame({'Date': times, 'Call Duration': [0] * len(times)})
+        
     #Remove duplicate entries by converting call data to set
-    call_data = set([(datetime.datetime.utcfromtimestamp(call[0] / 1000), tuple([(entry, call[1][entry]) for entry in call[1]])) for call in data['lamp.calls']])
+    call_data = data['lamp.calls']
+    sel_call_data = call_data.loc[call_data['call_type'] == label, :]
+    
+    #Map each call with corresponding time wdinwo 
+    timesSeries = pd.Series(times)
+    time_sel_call_data = sel_call_data.apply(lambda row: timesSeries[(timesSeries <= row['local_datetime']) & ((row['local_datetime'] - timesSeries) < resolution)].max(), axis=1)
+    
+    sel_call_data.loc[:, 'time'] = time_sel_call_data
+    
+    callDurationDf = pd.DataFrame([[t, sel_call_data.loc[sel_call_data['time'] == t, 'call_duration'].mean()] for t in times], columns=['Date', 'Call Duration'])
+    
+    return callDurationDf
+    
 
-    #Match each call with a corresponding time window
-    callDf = pd.DataFrame([[min([t for t in times if t <= call[0]], key=lambda x: abs(x - call[0])), dict(call[1])['call_duration']] for call in call_data if dict(call[1])['call_type'] == label and call[0] >= sorted(times)[0] and call[0] <= sorted(times)[-1] + resolution], columns=['Date', 'Call Duration'])
-    durationDf = pd.DataFrame([[d, df['Call Duration'].sum()] for d, df in callDf.groupby('Date')], columns=['Date', 'Call Duration'])
-    return durationDf
 
 def call_number(data, times, resolution, label=1):
     """
@@ -53,22 +73,32 @@ def call_number(data, times, resolution, label=1):
     :param label(int): indicates whether or not to query incoming calls (1), outgoing calls (2)
     """
     if 'lamp.calls' not in data:
-        return None
+        return pd.DataFrame({'Date': times, 'Call Number': [0] * len(times)})
         
     #Remove duplicate entries by converting call data to set
-    call_data = set([(datetime.datetime.utcfromtimestamp(call[0] / 1000), tuple([(entry, call[1][entry]) for entry in call[1]])) for call in data['lamp.calls']])
+    call_data = data['lamp.calls']
+    sel_call_data = call_data.loc[call_data['call_type'] == label, :]
     
-    #Match each call with a corresponding time window
-    print([call for call in call_data[1]])
-    callDf = pd.DataFrame([[min([t for t in times if t <= call[0]], key=lambda x: abs(x - call[0])), call[1][1][1]] for call in call_data if dict(call[1])[1] == label and call[0] >= sorted(times)[0] and call[0] <= sorted(times)[-1] + resolution], columns=['Date', 'Call Type'])
-    freqDf = pd.DataFrame([[d, df.count().values[0]] for d, df in callDf.groupby('Date')], columns=['Date', 'Call Frequency'])
-    return freqDf
+    #Map each call with corresponding time wdinwo 
+    timesSeries = pd.Series(times)
+    time_sel_call_data = sel_call_data.apply(lambda row: timesSeries[(timesSeries <= row['local_datetime']) & ((row['local_datetime'] - timesSeries) < resolution)].max(), axis=1)
+    
+    sel_call_data.loc[:, 'time'] = time_sel_call_data
+    
+    callNumberDf = pd.DataFrame([[t, len(sel_call_data.loc[sel_call_data['time'] == t, :])] for t in times], columns=['Date', 'Call Number'])
+    
+    return callNumberDf
+    
+    
     
 def all(sensor_data, dates, resolution):
     #print(sensor_data['lamp.calls'])
     incoming_calls, outgoing_calls = call_number(sensor_data, dates, resolution=resolution, label=1), call_number(sensor_data, dates, resolution=resolution, label=2)
     incoming_callduration, outgoing_callduration = call_duration(sensor_data, dates, resolution=resolution, label=1), call_duration(sensor_data, dates, resolution=resolution, label=2)
 
+    total_call_degree = call_degree(sensor_data, dates, resolution)
+    #print(incoming_calls)#, incoming_callduration, total_call_degree)
+    
     df_list = [incoming_calls, outgoing_calls, incoming_callduration, outgoing_callduration]
     allDfs = reduce(lambda left, right: pd.merge(left, right, on=["Date"], how='left'), df_list)
     

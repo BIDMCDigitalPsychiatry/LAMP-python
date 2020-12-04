@@ -21,7 +21,6 @@ def activities(sensor_data, dates):
     TIME = dates[0].time()
     accelDf = convert_to_df(sensor_data)
     bed_time, wake_time = sleep_time_mean(sensor_data, dates)
-
     #Get mean accel readings of 10min bins for participant
     times, magnitudes = [], []
     accelDf.loc[:, 'Time'] = pd.to_datetime(accelDf["Time"].astype(str))
@@ -37,24 +36,28 @@ def activities(sensor_data, dates):
 
     #We need to shift times so that the day begins a midnight (and thus is on the same day) sleep start flex begins on 
     accelDf.loc[:, "Shifted Time"] = pd.to_datetime(accelDf['UTC time']) - (datetime.datetime.combine(datetime.date.min, sleepEndFlex) - datetime.datetime.min)
-
-    daily_activity_data = []
     accelDf.loc[:, "Shifted Day"] = pd.to_datetime(accelDf['Shifted Time']).dt.date 
+    #Also adjust bed/wake/flex times to account for shift
+    
+    sleepStartShifted = (datetime.datetime.combine(datetime.date.today(), sleepStart) - (datetime.datetime.combine(datetime.date.min, sleepEndFlex) - datetime.datetime.min)).time()
+    sleepStartFlexShifted = (datetime.datetime.combine(datetime.date.today(), sleepStartFlex) - (datetime.datetime.combine(datetime.date.min, sleepEndFlex) - datetime.datetime.min)).time()
+    sleepEndShifted = (datetime.datetime.combine(datetime.date.today(), sleepEnd) - (datetime.datetime.combine(datetime.date.min, sleepEndFlex) - datetime.datetime.min)).time()
+    sleepEndFlexShifted = (datetime.datetime.combine(datetime.date.today(), sleepEndFlex) - (datetime.datetime.combine(datetime.date.min, sleepEndFlex) - datetime.datetime.min)).time()
+    
+    
+    daily_activity_data = []
     for day, df in accelDf.groupby('Shifted Day'):
-
-        ## DECIDE ON CORRECTED TIME ##
-        #####
-        df['Corrected Time'] = pd.to_datetime(df['UTC time'])# - datetime.timedelta(hours=3)
-        ######
         
         #Keep track of how many 10min blocks are 1. inactive during "active" periods; or 2. active during "inactive periods"
         night_activity_count, night_inactivity_count, day_inactivity_count = 0, 0, 0
-        for t, tDf in df.groupby(pd.Grouper(key='Corrected Time', freq='10min')):
-            if (sleepStartFlex <= t.time() < sleepStart) or (sleepEnd <= t.time() < sleepEndFlex):
+        #for t, tDf in df.groupby(pd.Grouper(key='UTC time', freq='10min')):
+        for t, tDf in df.groupby(pd.Grouper(key='Shifted Time', freq='10min')):
+            if (sleepStartFlexShifted <= t.time() < sleepStartShifted) or (sleepEndShifted <= t.time()):
+            #if t - sleepStart
                 if tDf['magnitude'].abs().mean() < df10min.loc[df10min['Time'] == t.time(), 'Magnitude'].values[0]: 
                     night_inactivity_count += 1
                     
-            elif sleepStart <= t.time() < sleepEnd:
+            elif sleepStartShifted <= t.time() < sleepEndShifted:
                 if tDf['magnitude'].abs().mean() > df10min.loc[df10min['Time'] == t.time(), 'Magnitude'].values[0]: 
                     night_activity_count += 1
 
@@ -63,9 +66,11 @@ def activities(sensor_data, dates):
                     day_inactivity_count += 1
 
         #Calculate day's sleep using these activity account
+        
         daily_sleep = (datetime.datetime.combine(datetime.date.today(), datetime.time(hour=8)) - datetime.timedelta(minutes = night_activity_count * 10) + datetime.timedelta(minutes = night_inactivity_count * 10)).time()
         daily_sedentary = datetime.time(hour = int(day_inactivity_count * 10 / 60), 
                                         minute = (day_inactivity_count * 10) % 60)
+        
         #Label rest of the day as being active
         h1, m1, s1 = daily_sleep.hour, daily_sleep.minute, daily_sleep.second
         h2, m2, s2 = daily_sedentary.hour, daily_sedentary.minute, daily_sedentary.second
@@ -73,6 +78,7 @@ def activities(sensor_data, dates):
 
         SECS_IN_A_DAY = 86400
         t3_secs = SECS_IN_A_DAY - (t1_secs + t2_secs)
+        #print(t3_secs)
         daily_active = datetime.time(hour = int(t3_secs / 3600),
                                      minute = int((t3_secs % 3600) / 60),
                                      second = (t3_secs % 3600) % 60)
@@ -85,13 +91,13 @@ def convert_to_df(sensor_data):
     """
     Turn sensor data dict into df
     """
-    sensorDf = sensor_data['lamp.accelerometer']
+    sensorDf = sensor_data['lamp.accelerometer'].copy()
     
     # pd.DataFrame(data=[[r[0], r[1]['x'], r[1]['y'], r[1]['z']] for r in sensor_data["lamp.accelerometer"]], 
     #                         columns = ['timestamp', 'x', 'y', 'z']).drop_duplicates()
     
         
-    sensorDf['UTC time'] = [str(d.date()) + "T" + str(d.time()) for d in pd.to_datetime(sensorDf['timestamp'], unit='ms')]
+    sensorDf['UTC time'] = [str(d.date()) + "T" + str(d.time()) for d in sensorDf['local_datetime']]
     
     sensorDf['Day'] = sensorDf.apply(lambda row: row['UTC time'].split('T')[0], axis=1)
     sensorDf['Time'] = sensorDf.apply(lambda row: row['UTC time'].split('T')[1], axis=1)
